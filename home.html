@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Home | My SPA</title>
+  <style>
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f7fa}
+    .navbar{background:#2575fc;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
+    .container{max-width:800px;margin:20px auto;padding:0 16px}
+    .note{background:#fff;padding:14px;border-radius:8px;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,.06)}
+    .add-note{background:#fff;padding:16px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.06)}
+    input,textarea{width:100%;padding:8px;margin:8px 0;border:1px solid #ddd;border-radius:6px}
+    button{background:#2575fc;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer}
+    .msg{margin:10px 0;color:#c00}
+  </style>
+</head>
+<body>
+  <div class="navbar">
+    <div>📒 My SPA</div>
+    <div>
+      <button id="logoutBtn">Logout</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>All Notes</h2>
+    <div id="notes">Loading...</div>
+
+    <div class="add-note" style="margin-top:20px">
+      <h3>Add New Note</h3>
+      <div class="msg" id="status"></div>
+      <input id="title" placeholder="Note title" />
+      <textarea id="content" rows="4" placeholder="Note content"></textarea>
+      <button id="addBtn">Add Note</button>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = "http://localhost:5000/api";
+    const notesEl = document.getElementById("notes");
+    const statusEl = document.getElementById("status");
+    const logoutBtn = document.getElementById("logoutBtn");
+    const addBtn = document.getElementById("addBtn");
+
+    // get token (if not present, try to fetch dev token for local dev convenience)
+    async function ensureToken() {
+      let token = localStorage.getItem("token");
+      if (!token) {
+        console.warn("No token found in localStorage. Fetching dev token (dev-only).");
+        try {
+          const res = await fetch(API_BASE + "/dev/token");
+          if (res.ok) {
+            const data = await res.json();
+            token = data.token;
+            localStorage.setItem("token", token);
+            console.log("Dev token stored in localStorage.");
+          } else {
+            console.warn("Dev token endpoint not available. You should login first.");
+          }
+        } catch (err) {
+          console.warn("Could not fetch dev token:", err);
+        }
+      }
+      return token;
+    }
+
+    async function loadNotes() {
+      notesEl.textContent = "Loading...";
+      const token = await ensureToken();
+      if (!token) {
+        window.location.href = "login.html";
+        return;
+      }
+
+      try {
+        const res = await fetch(API_BASE + "/notes", {
+          headers: { "Authorization": "Bearer " + token }
+        });
+        if (res.status === 401) {
+          // token invalid/expired
+          statusEl.textContent = "Unauthorized. Please login again.";
+          console.error("401 from /notes");
+          localStorage.removeItem("token");
+          setTimeout(() => window.location.href = "login.html", 1000);
+          return;
+        }
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(err || "Failed to load notes");
+        }
+        const notes = await res.json();
+        if (!Array.isArray(notes) || notes.length === 0) {
+          notesEl.innerHTML = "<p>No notes available.</p>";
+          return;
+        }
+        notesEl.innerHTML = "";
+        notes.forEach(note => {
+          const d = document.createElement("div");
+          d.className = "note";
+          d.innerHTML = `<h4>${escapeHtml(note.title)}</h4><p>${escapeHtml(note.content)}</p>`;
+          notesEl.appendChild(d);
+        });
+      } catch (err) {
+        console.error("Error loading notes:", err);
+        notesEl.innerHTML = `<p style="color:#c00">Error loading notes: ${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    async function addNote() {
+      statusEl.textContent = "";
+      const title = document.getElementById("title").value.trim();
+      const content = document.getElementById("content").value.trim();
+      if (!title || !content) {
+        statusEl.style.color = "red";
+        statusEl.textContent = "Please enter title and content.";
+        return;
+      }
+      const token = localStorage.getItem("token");
+      if (!token) {
+        statusEl.style.color = "red";
+        statusEl.textContent = "No token, please login.";
+        return;
+      }
+      try {
+        const res = await fetch(API_BASE + "/notes", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token
+          },
+          body: JSON.stringify({ title, content })
+        });
+        if (res.status === 401) {
+          statusEl.style.color = "red";
+          statusEl.textContent = "Unauthorized. Please login again.";
+          localStorage.removeItem("token");
+          setTimeout(() => window.location.href = "login.html", 1000);
+          return;
+        }
+        if (!res.ok) {
+          const body = await res.json().catch(()=>null);
+          throw new Error(body?.message || "Add note failed");
+        }
+        const added = await res.json();
+        document.getElementById("title").value = "";
+        document.getElementById("content").value = "";
+        statusEl.style.color = "green";
+        statusEl.textContent = "Note added.";
+        loadNotes();
+      } catch (err) {
+        console.error("Add note error:", err);
+        statusEl.style.color = "red";
+        statusEl.textContent = "Error: " + err.message;
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem("token");
+      window.location.href = "login.html";
+    }
+
+    // small helper to avoid injecting HTML
+    function escapeHtml(str) {
+      if (!str) return "";
+      return str.replace(/[&<>"']/g, function(m) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m];
+      });
+    }
+
+    logoutBtn.addEventListener("click", logout);
+    addBtn.addEventListener("click", addNote);
+
+    // load notes on start
+    loadNotes();
+  </script>
+</body>
+</html>
